@@ -1,0 +1,5 @@
+# Development files are excluded from release archives (git archive).
+/dev export-ignore
+/tests export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore

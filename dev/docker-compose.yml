@@ -1,0 +1,57 @@
+# Development environment: Zabbix 7.0 (latest patch release and 7.0.0) with this module mounted.
+#
+#   docker compose -f dev/docker-compose.yml up -d
+#   python3 dev/seed.py
+#
+# Frontends: http://localhost:8090 (7.0 latest), http://localhost:8091 (7.0.0). User: Admin, password: zabbix.
+
+name: zabbix-statetimeline
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix
+      POSTGRES_DB: zabbix
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  server:
+    image: zabbix/zabbix-server-pgsql:alpine-7.0-latest
+    environment: &db
+      DB_SERVER_HOST: postgres
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: zabbix
+      POSTGRES_DB: zabbix
+    depends_on:
+      - postgres
+
+  web:
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0-latest
+    environment:
+      <<: *db
+      ZBX_SERVER_HOST: server
+      PHP_TZ: UTC
+    ports:
+      - "8090:8080"
+    volumes:
+      - ..:/usr/share/zabbix/modules/statetimeline:ro
+    depends_on:
+      - server
+
+  web-7.0.0:
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0.0
+    environment:
+      <<: *db
+      ZBX_SERVER_HOST: server
+      PHP_TZ: UTC
+    ports:
+      - "8091:8080"
+    volumes:
+      - ..:/usr/share/zabbix/modules/statetimeline:ro
+    depends_on:
+      - server
+
+volumes:
+  pgdata:

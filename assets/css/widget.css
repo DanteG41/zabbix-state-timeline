@@ -1,0 +1,200 @@
+/*
+** State timeline widget module for Zabbix 7.0
+** Copyright (C) 2026 Mamedaliev Kirill
+**
+** This program is free software: you can redistribute it and/or modify it under the terms of
+** the GNU Affero General Public License as published by the Free Software Foundation, version 3.
+**
+** This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+** without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+** See the GNU Affero General Public License for more details.
+**
+** You should have received a copy of the GNU Affero General Public License along with this program.
+** If not, see <https://www.gnu.org/licenses/>.
+**/
+
+/* Colors are inherited from the theme: text, links and borders use the theme styles of Zabbix. */
+
+div.dashboard-widget-statetimeline {
+	overflow: hidden;
+}
+
+.dashboard-widget-statetimeline .state-timeline {
+	box-sizing: border-box;
+	padding: 2px 10px 0;
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.dashboard-widget-statetimeline .state-timeline-notice {
+	display: flex;
+	flex: none;
+	gap: 10px;
+	box-sizing: border-box;
+	height: 18px;
+	padding: 0 0 4px;
+	font-size: 11px;
+	line-height: 14px;
+	white-space: nowrap;
+	opacity: .8;
+}
+
+.dashboard-widget-statetimeline .state-timeline-notice-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.dashboard-widget-statetimeline .state-timeline-notice-range {
+	flex: none;
+}
+
+.dashboard-widget-statetimeline .state-timeline-main {
+	position: relative;
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.dashboard-widget-statetimeline .state-timeline-labels {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	overflow: hidden;
+	font-size: 12px;
+}
+
+.dashboard-widget-statetimeline .state-timeline-label {
+	position: absolute;
+	left: 0;
+	box-sizing: border-box;
+	padding-right: 8px;
+	white-space: nowrap;
+}
+
+.dashboard-widget-statetimeline .state-timeline-label a {
+	display: block;
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	line-height: inherit;
+}
+
+.dashboard-widget-statetimeline .state-timeline-plot {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	cursor: crosshair;
+}
+
+.dashboard-widget-statetimeline .state-timeline-canvas {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: block;
+}
+
+.dashboard-widget-statetimeline .state-timeline-overlay {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: block;
+	overflow: visible;
+	font-size: 11px;
+	user-select: none;
+}
+
+.dashboard-widget-statetimeline .state-timeline-row-highlight {
+	fill: none;
+	stroke: currentColor;
+	stroke-opacity: .25;
+	stroke-width: 1px;
+	pointer-events: none;
+}
+
+/* Hovered state interval: lightened and glowing with the color of the state. */
+.dashboard-widget-statetimeline .state-timeline-segment-highlight {
+	fill: #ffffff;
+	fill-opacity: .18;
+	stroke-width: 1px;
+	pointer-events: none;
+}
+
+.dashboard-widget-statetimeline .state-timeline-overlay .svg-helper,
+.dashboard-widget-statetimeline .state-timeline-overlay .svg-graph-selection-text {
+	pointer-events: none;
+}
+
+.dashboard-widget-statetimeline .state-timeline-notice[hidden] {
+	display: none;
+}
+
+.dashboard-widget-statetimeline .state-timeline-scrollbar {
+	position: absolute;
+	top: 0;
+	right: 0;
+	width: 8px;
+	border-radius: 4px;
+	background-color: rgba(128, 128, 128, .2);
+	cursor: pointer;
+	touch-action: none;
+}
+
+.dashboard-widget-statetimeline .state-timeline-scrollbar[hidden] {
+	display: none;
+}
+
+.dashboard-widget-statetimeline .state-timeline-scrollbar:focus-visible {
+	outline: 1px solid currentColor;
+	outline-offset: 1px;
+}
+
+.dashboard-widget-statetimeline .state-timeline-scrollbar-thumb {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	border-radius: 4px;
+	background-color: rgba(128, 128, 128, .6);
+	cursor: grab;
+}
+
+.dashboard-widget-statetimeline .state-timeline-scrollbar-thumb:hover,
+.dashboard-widget-statetimeline .state-timeline-scrollbar-thumb.is-dragging {
+	background-color: rgba(128, 128, 128, .85);
+}
+
+.dashboard-widget-statetimeline .state-timeline-scrollbar-thumb.is-dragging {
+	cursor: grabbing;
+}
+
+.state-timeline-hintbox .header {
+	font-weight: bold;
+	margin-bottom: 4px;
+}
+
+.state-timeline-hintbox-table td {
+	padding: 0 12px 0 0;
+	white-space: nowrap;
+	vertical-align: middle;
+}
+
+.state-timeline-hintbox-table .svg-graph-hintbox-item-color {
+	display: inline-block;
+	min-width: 10px;
+	height: 10px;
+	margin-right: 4px;
+	vertical-align: middle;
+}
+
+.state-timeline-hintbox-key,
+.state-timeline-hintbox-note {
+	margin-top: 4px;
+	font-size: 11px;
+}

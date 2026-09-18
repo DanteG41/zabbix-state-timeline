@@ -1,0 +1,47 @@
+{
+	"manifest_version": 2.0,
+	"id": "statetimeline",
+	"type": "widget",
+	"name": "State timeline",
+	"namespace": "StateTimeline",
+	"version": "1.0.0",
+	"author": "Mamedaliev Kirill",
+	"description": "Displays history of boolean (0/1) items as horizontal state timelines, up to 100 items.",
+	"widget": {
+		"size": {
+			"width": 36,
+			"height": 6
+		},
+		"js_class": "CWidgetStateTimeline",
+		"in": {
+			"hostids": {
+				"type": "_hostids"
+			},
+			"groupids": {
+				"type": "_hostgroupids"
+			},
+			"time_period": {
+				"type": "_timeperiod"
+			}
+		},
+		"out": [
+			{
+				"type": "_timeperiod"
+			}
+		]
+	},
+	"actions": {
+		"widget.statetimeline.view": {
+			"class": "WidgetView"
+		}
+	},
+	"assets": {
+		"css": ["widget.css"],
+		"js": ["class.statetimeline.js", "class.widget.js"]
+	},
+	"config": {
+		"max_items": 100,
+		"items_per_page": 25,
+		"raw_values_limit": 200000
+	}
+}
