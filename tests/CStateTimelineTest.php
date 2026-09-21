@@ -120,6 +120,16 @@ check('no data after', [[43200.0, 1, '1'], [43560.0, -1, null], [45000.0, 1, '1'
 	runs($r)
 );
 
+// The first value may be valid from the period start, if the value before the period was not loaded.
+$r = H::buildRunsFromValues(values([[$from + 10, 1], [$from + 700, 0]]), null, $from, $from + 3600, null, null, true);
+check('first value from start', [[43200.0, 1, '1'], [43900.0, 0, '0']], runs($r));
+check('first value from start, before', true, $r['before']);
+
+$r = H::buildRunsFromValues(values([[$from + 10, 1]]), ['clock' => $from - 30, 'value' => '0'], $from,
+	$from + 3600, null, null, true
+);
+check('previous value wins', [[43200.0, 0, '0'], [43210.0, 1, '1']], runs($r));
+
 // Value at the period start replaces the previous value.
 $r = H::buildRunsFromValues(values([[$from, 0]]), ['clock' => $from - 30, 'value' => '1'], $from, $from + 3600,
 	null, null

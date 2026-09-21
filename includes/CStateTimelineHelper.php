@@ -18,6 +18,7 @@
 namespace Modules\StateTimeline\Includes;
 
 use API,
+	CHistoryManager,
 	CHousekeepingHelper,
 	CMacrosResolverHelper,
 	CParser,
@@ -79,19 +80,36 @@ class CStateTimelineHelper {
 
 		$items = self::resolveStoragePeriods($items);
 
-		// Items for which the history covers the whole period; others are loaded from trends, as in the Graph widget.
+		// Aggregated trends are used for long periods and for items without history, as in the Graph widget.
+		$use_history = ($time_to - $time_from) / $width <= ZBX_MAX_TREND_DIFF / ZBX_GRAPH_MAX_SKIP_CELL;
+
 		$history_items = [];
+		$exact_candidates = [];
 
 		foreach ($items as $itemid => $item) {
 			if ($item['trends'] == 0 || time() - $item['history'] < $time_from) {
 				$history_items[$itemid] = $item;
+
+				if ($use_history || $item['trends'] == 0) {
+					$exact_candidates[$itemid] = $item;
+				}
 			}
 		}
 
-		$exact_itemids = self::selectExactItems($history_items, $time_from, $time_to, $options['raw_values_limit']);
+		/*
+		 * Values of items are loaded in one of two ways:
+		 *  - changes only: the database returns only the values differing from the previous one (SQL storage on
+		 *    databases supporting window functions), which is the number of state changes instead of the number of
+		 *    collected values;
+		 *  - all values: history.get of items fitting the limit of raw values (other storages and databases).
+		 */
+		$changes = self::getChangeValues($items, $exact_candidates, $time_from, $time_to,
+			$options['raw_values_limit']
+		);
 
-		// Aggregated history is used instead of trends for short periods, same as in the Graph widget.
-		$use_history = ($time_to - $time_from) / $width <= ZBX_MAX_TREND_DIFF / ZBX_GRAPH_MAX_SKIP_CELL;
+		$exact_itemids = $changes !== null
+			? array_fill_keys(array_keys($exact_candidates), 0)
+			: self::selectExactItems($exact_candidates, $time_from, $time_to, $options['raw_values_limit']);
 
 		$aggregated_sources = [];
 
@@ -106,14 +124,29 @@ class CStateTimelineHelper {
 				: 'trends';
 		}
 
-		$prev_values = self::getPreviousValues($items, $time_from, $options['nodata_after']);
+		$values_by_item = $changes ?? self::getHistoryValues($items, array_keys($exact_itemids), $exact_itemids,
+			$time_from, $time_to
+		);
+
+		// Items having a value within the first pixel of the timeline do not need the value before the period.
+		$tolerance = max(1, (int) (($time_to - $time_from) / $width));
+		$known_at_start = [];
+
+		if ($changes !== null) {
+			foreach ($changes as $itemid => $values) {
+				if ($values && $values[0]['clock'] - $time_from <= $tolerance) {
+					$known_at_start[$itemid] = true;
+				}
+			}
+		}
+
+		$prev_values = self::getPreviousValues($items, $known_at_start, $time_from, $options['nodata_after']);
 
 		$timelines = [];
 
-		foreach (self::getHistoryValues($items, array_keys($exact_itemids), $exact_itemids, $time_from, $time_to)
-				as $itemid => $values) {
+		foreach ($values_by_item as $itemid => $values) {
 			$runs = self::buildRunsFromValues($values, $prev_values[$itemid] ?? null, $time_from, $end,
-				$options['nodata_after'], $options['threshold']
+				$options['nodata_after'], $options['threshold'], array_key_exists($itemid, $known_at_start)
 			);
 
 			// Too many changes to be useful at the current zoom level: show aggregated data instead.
@@ -201,11 +234,14 @@ class CStateTimelineHelper {
 	 * @param int        $end           Period end, not later than now.
 	 * @param int|null   $nodata_after
 	 * @param float|null $threshold
+	 * @param bool       $first_value_from_start  Whether the first value is valid from the period start. Used for
+	 *                                            items having a value within the first pixel of the timeline, for
+	 *                                            which the value before the period is not loaded.
 	 *
 	 * @return array
 	 */
 	public static function buildRunsFromValues(array $values, ?array $prev_value, int $time_from, int $end,
-			?int $nodata_after, ?float $threshold): array {
+			?int $nodata_after, ?float $threshold, bool $first_value_from_start = false): array {
 		$builder = new CStateRunsBuilder($time_from, $end, $nodata_after);
 
 		if ($prev_value !== null) {
@@ -214,15 +250,22 @@ class CStateTimelineHelper {
 			);
 		}
 
+		$from_start = $first_value_from_start && $prev_value === null;
+
 		foreach ($values as $value) {
 			$clock = $value['clock'] + $value['ns'] / 1000000000;
 
-			$builder->addValue($clock, $clock, self::getState((float) $value['value'], $threshold),
-				self::normalizeValue($value['value'])
+			$builder->addValue($from_start ? $time_from : $clock, $clock,
+				self::getState((float) $value['value'], $threshold), self::normalizeValue($value['value'])
 			);
+
+			$from_start = false;
 		}
 
-		return $builder->getRuns() + ['before' => $prev_value !== null && !$builder->startsWithGap()];
+		// The state at the period start is not known exactly: either the value before the period was used, or the
+		// first value of the period was assumed to be valid from the period start.
+		return $builder->getRuns()
+			+ ['before' => ($prev_value !== null || $first_value_from_start) && !$builder->startsWithGap()];
 	}
 
 	/**
@@ -429,28 +472,120 @@ class CStateTimelineHelper {
 	}
 
 	/**
-	 * Get the last value before the period for each item, so that the state is known from the start of the period.
+	 * Get the last value before the period for items which state at the period start is not known otherwise.
+	 *
 	 * Values are searched within the "Max history display period" (Administration > General > GUI), same as for
-	 * "last value" in other parts of the frontend.
+	 * "last value" in other parts of the frontend. Items having a value within the first pixel of the timeline are
+	 * skipped: the lookback query is the most expensive one on large history tables, and such items would be drawn
+	 * the same way anyway.
+	 *
+	 * @param array    $items
+	 * @param array    $known_at_start  Items which state at the period start is known, indexed by itemid.
+	 * @param int      $time_from
+	 * @param int|null $nodata_after
 	 *
 	 * @return array  Values (clock, value), indexed by itemid.
 	 */
-	private static function getPreviousValues(array $items, int $time_from, ?int $nodata_after): array {
+	private static function getPreviousValues(array $items, array $known_at_start, int $time_from,
+			?int $nodata_after): array {
+		$last_items = [];
+
+		foreach ($items as $itemid => $item) {
+			if (!array_key_exists($itemid, $known_at_start)) {
+				$last_items[] = ['itemid' => $itemid, 'value_type' => $item['value_type'], 'source' => 'history'];
+			}
+		}
+
+		if (!$last_items) {
+			return [];
+		}
+
 		$lookback = timeUnitToSeconds(CSettingsHelper::get(CSettingsHelper::HISTORY_PERIOD));
 
 		if ($nodata_after !== null) {
 			$lookback = min($lookback, $nodata_after);
 		}
 
-		$last_items = [];
-
-		foreach ($items as $itemid => $item) {
-			$last_items[] = ['itemid' => $itemid, 'value_type' => $item['value_type'], 'source' => 'history'];
-		}
-
 		return Manager::History()->getAggregatedValues($last_items, AGGREGATE_LAST, $time_from - $lookback,
 			$time_from - 1
 		) ?: [];
+	}
+
+	/**
+	 * Load values of items from history, returning only the values differing from the previous value of the item.
+	 *
+	 * The comparison is done by the database (window function), so the number of returned and processed rows is the
+	 * number of value changes instead of the number of collected values. Used for SQL history storage on MySQL and
+	 * PostgreSQL; other storages and databases fall back to loading all values.
+	 *
+	 * @param array $items
+	 * @param array $history_items  Items to load, indexed by itemid.
+	 * @param int   $time_from
+	 * @param int   $time_to
+	 * @param int   $limit          Maximum total number of returned values.
+	 *
+	 * @return array|null  Values (clock, ns, value) sorted by time, indexed by itemid. Null if not supported or if
+	 *                     the limit is exceeded.
+	 */
+	private static function getChangeValues(array $items, array $history_items, int $time_from, int $time_to,
+			int $limit): ?array {
+		global $DB;
+
+		if (!$history_items || $limit == 0
+				|| !in_array($DB['TYPE'], [ZBX_DB_MYSQL, ZBX_DB_POSTGRESQL], true)) {
+			return null;
+		}
+
+		$itemids_by_type = [];
+
+		foreach ($history_items as $itemid => $item) {
+			if (CHistoryManager::getDataSourceType($item['value_type']) != ZBX_HISTORY_SOURCE_SQL) {
+				return null;
+			}
+
+			$itemids_by_type[$item['value_type']][] = $itemid;
+		}
+
+		$time_from_history = CHousekeepingHelper::get(CHousekeepingHelper::HK_HISTORY_GLOBAL)
+			? max($time_from, time() - timeUnitToSeconds(CHousekeepingHelper::get(CHousekeepingHelper::HK_HISTORY)) + 1)
+			: $time_from;
+
+		if ($time_from_history > $time_to) {
+			return array_fill_keys(array_keys($history_items), []);
+		}
+
+		$values = array_fill_keys(array_keys($history_items), []);
+		$count = 0;
+
+		foreach ($itemids_by_type as $value_type => $itemids) {
+			$table = CHistoryManager::getTableName($value_type);
+
+			$result = DBselect(
+				'SELECT h.itemid,h.clock,h.ns,h.value'.
+				' FROM ('.
+					'SELECT itemid,clock,ns,value,'.
+						'LAG(value) OVER (PARTITION BY itemid ORDER BY clock,ns) AS prev_value'.
+					' FROM '.$table.
+					' WHERE '.dbConditionInt('itemid', $itemids).
+						' AND clock>='.zbx_dbstr($time_from_history).
+						' AND clock<='.zbx_dbstr($time_to).
+				') h'.
+				' WHERE h.prev_value IS NULL'.
+					' OR h.value<>h.prev_value'.
+				' ORDER BY h.itemid,h.clock,h.ns',
+				$limit + 1
+			);
+
+			while (($row = DBfetch($result)) !== false) {
+				if (++$count > $limit) {
+					return null;
+				}
+
+				$values[$row['itemid']][] = $row;
+			}
+		}
+
+		return $values;
 	}
 
 	/**

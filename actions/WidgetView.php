@@ -242,14 +242,7 @@ class WidgetView extends CControllerDashboardWidgetView {
 			'searchByAny' => true
 		];
 
-		$result['total'] = (int) API::Item()->get($options + ['countOutput' => true]);
-
-		if ($result['total'] == 0) {
-			return $result;
-		}
-
 		$search_limit = (int) CSettingsHelper::get(CSettingsHelper::SEARCH_LIMIT);
-		$result['search_limit'] = $result['total'] > $search_limit;
 
 		$db_items = API::Item()->get($options + [
 			'output' => ['itemid', 'hostid', 'name_resolved', 'key_', 'value_type', 'units', 'history', 'trends'],
@@ -260,6 +253,16 @@ class WidgetView extends CControllerDashboardWidgetView {
 			'limit' => $search_limit,
 			'preservekeys' => true
 		]);
+
+		if (!$db_items) {
+			return $result;
+		}
+
+		// The number of matching items is counted separately only if the search limit is reached.
+		$result['search_limit'] = count($db_items) == $search_limit;
+		$result['total'] = $result['search_limit']
+			? (int) API::Item()->get($options + ['countOutput' => true])
+			: count($db_items);
 
 		foreach ($db_items as &$db_item) {
 			$db_item['name'] = $db_item['name_resolved'];

@@ -114,7 +114,7 @@ Limits are set in `manifest.json` (`config`):
 |--------------------|---------|---------------------------------------------------------------------------------|
 | `max_items`        | 100     | Maximum number of displayed items.                                              |
 | `items_per_page`   | 25      | Number of items displayed at once.                                              |
-| `raw_values_limit` | 200000  | Maximum number of raw history values loaded per widget update (see below).      |
+| `raw_values_limit` | 200000  | Maximum number of history values loaded per widget update (see below).          |
 
 ## How it works
 
@@ -137,30 +137,37 @@ tooltip and navigation are implemented by the widget.
 ### Data loading
 
 One widget update is one request to the server, for all items. The server converts history to *runs* (time
-intervals with the same value), so the response size depends on the number of state changes, not on the number of
-collected values:
+intervals with the same value), so both the processing and the response size depend on the number of state
+changes, not on the number of collected values:
 
-1. The number of values of each item in the period is counted (one query per value type).
-2. **Exact mode**: while the total number of values fits `raw_values_limit`, raw values are loaded with
-   `history.get` (in batches of up to 50000 values) and converted to runs. State changes are exact.
-3. **Aggregated mode**: other items, and items with more state changes than 4 per pixel, are loaded with
-   `getGraphAggregationByWidth()` (min/max per pixel, as in the Graph widget), from history or trends.
-   A pixel containing both states is drawn half state 1 (upper half) and half state 0 (lower half), times in the
-   tooltip are approximate ("≈"), zoom in to get exact times.
-4. The last value before the period start is loaded for all items at once (within the "Max history display
-   period" setting).
+1. **Changes only** (MySQL and PostgreSQL, SQL history storage): one query per value type returns only the values
+   differing from the previous value of the item (window function `LAG`). A boolean item collected every 30
+   seconds gives a couple of rows per day instead of 2880. State changes are exact.
+2. **All values** (Elasticsearch or other databases): the number of values is counted, and values of items fitting
+   `raw_values_limit` are loaded with `history.get` in batches. State changes are exact.
+3. **Aggregated mode**: items not loaded above, items with more state changes than 4 per pixel, and long periods
+   (more than 225 seconds per pixel, same rule as in the Graph widget) are loaded with
+   `getGraphAggregationByWidth()` (min/max per pixel) from history or trends. A pixel containing both states is
+   drawn half state 1 (upper half) and half state 0 (lower half), times in the tooltip are approximate ("≈"),
+   zoom in to get exact times.
+4. The last value before the period start is loaded for the items that need it: items having a value within the
+   first pixel of the timeline are skipped, as this lookback query (within the "Max history display period"
+   setting) is the most expensive one on large history tables.
 
 The browser keeps the data of all items and draws only visible rows on a single canvas, so scrolling, resizing
 and hovering do not load data. The number of DOM elements does not depend on the number of values. Moving the
 mouse does not redraw the rows (the helper line, highlight and selection are drawn on an overlay).
 
-Example: 100 items with values every 30 seconds (864 000 values in 3 days), PostgreSQL:
+Response time of one update, PostgreSQL, items with a value every 30 seconds ("all values" is the fallback used
+for Elasticsearch and other databases):
 
-| Period | Response time | Response size | Exact items |
-|--------|---------------|---------------|-------------|
-| 1 hour | 0.16 s        | 39 KB         | 100         |
-| 1 day  | 0.96 s        | 78 KB         | 69          |
-| 3 days | 1.8 s         | 164 KB        | 23          |
+| Items | Period | Values in period | Changes only | All values |
+|-------|--------|------------------|--------------|------------|
+| 20    | 1 hour | 2 400            | 0.06 s       | 0.11 s     |
+| 20    | 6 hours| 14 400           | 0.08 s       | 0.19 s     |
+| 20    | 2 days | 115 000          | 0.17 s       | 0.45 s     |
+| 100   | 1 day  | 288 000          | 0.07 s       | 0.96 s     |
+| 100   | 3 days | 864 000          | 0.17 s       | 1.8 s      |
 
 ## Development
 
